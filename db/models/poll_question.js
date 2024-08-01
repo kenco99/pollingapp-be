@@ -15,7 +15,8 @@ module.exports = (sequelize, DataTypes) => {
   }
   poll_question.init({
     fk_user_id: DataTypes.UUID,
-    question_text: DataTypes.TEXT
+    question_text: DataTypes.TEXT,
+    maximum_time: DataTypes.INTEGER
   }, {
     sequelize,
     modelName: 'poll_question',

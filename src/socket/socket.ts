@@ -1,8 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import {deleteJsonDataFromKey, getJsonDataFromKey, setJsonDataToKey} from '../../redis/crud';
 import { v5 as uuidv5 } from 'uuid';
-import {answerQuestion, createQuestion, createOrUpdateUser} from "../controllers/pollapp";
-
+import {answerQuestion, createQuestion, createOrUpdateUser, updateUser} from "../controllers/pollapp";
 export const setupSocketHandlers = (io: Server) => {
     io.use(async (socket, next) => {
         try {
@@ -23,8 +22,9 @@ export const setupSocketHandlers = (io: Server) => {
                 io.emit('teacher-status', true as any);
                 socket.emit('set-user', {user_type:'teacher', user_id:generatedUUID})
             }else{
-                await createOrUpdateUser(generatedUUID, null, 'student')
-                socket.emit('set-user', {user_type:'student', user_id:generatedUUID})
+                const user:any = await createOrUpdateUser(generatedUUID, null, 'student');
+                if(user?.name) await setJsonDataToKey(socket.id, user.name, ".name");
+                socket.emit('set-user', {user_type:'student', user_id:generatedUUID, user_name: user.name})
             }
 
             next();
@@ -69,6 +69,18 @@ export const setupSocketHandlers = (io: Server) => {
                     socket.emit('set-user', {user_type:'student', user_id:user.uuid})
                     io.emit('teacher-status', false as any);
                 }
+            }catch (e) {
+                console.log(e)
+            }
+        });
+
+        socket.on('save-student-name', async (name:string) => {
+            try{
+                const user:any  = await getJsonDataFromKey(socket.id);
+
+                await updateUser(user.uuid, name)
+                if(name) await setJsonDataToKey(socket.id, name, ".name");
+                socket.emit('set-user', {user_type:'student', user_id:user.uuid, user_name:name})
             }catch (e) {
                 console.log(e)
             }
@@ -122,6 +134,21 @@ export const setupSocketHandlers = (io: Server) => {
                         question: null,
                         answer:null
                     } as any)
+            }
+        });
+
+        socket.on('send-message', async (message: string) => {
+            try {
+                const user: any = await getJsonDataFromKey(socket.id);
+                const userName = user.name || 'Anonymous';
+                const chatMessage = {
+                    sender: userName,
+                    text: message,
+                    timestamp: Date.now(),
+                };
+                io.emit('chat-message', chatMessage as any);
+            } catch (e) {
+                console.log(e);
             }
         });
 

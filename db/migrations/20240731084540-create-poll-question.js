@@ -20,6 +20,9 @@ module.exports = {
         allowNull: false,
         type: Sequelize.TEXT
       },
+      maximum_time:{
+        type: Sequelize.INTEGER
+      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE

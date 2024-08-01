@@ -11,7 +11,8 @@ interface Option {
 
 interface Question {
     question: string,
-    options: Option[]
+    options: Option[],
+    maximum_time: number
 }
 export const getUser = async (req: Request, res:Response): Promise<Response<any, Record<string, any>>> => {
     try {
@@ -38,23 +39,6 @@ export const getUser = async (req: Request, res:Response): Promise<Response<any,
         }else{
             return res.status(404).json({msg:'User not found'});
         }
-    } catch (err) {
-        return res.status(500).json({msg:'Error'});
-    }
-};
-
-export const updateUser = async (req: Request, res:Response): Promise<Response<any, Record<string, any>>> => {
-    try {
-        const data:any = req.query
-        const tabID = data.tabID;
-
-        const NAMESPACE = uuidv5.DNS;
-        const generatedUUID: string = uuidv5(tabID, NAMESPACE);
-        const name = data.name;
-
-        await DB.user.update({ name }, { where: { id: generatedUUID } });
-
-        return res.status(200).json({msg:'Success'});
     } catch (err) {
         return res.status(500).json({msg:'Error'});
     }
@@ -127,6 +111,91 @@ export const getQuestion = async (req: Request, res:Response): Promise<Response>
     }
 };
 
+export const getSubmissions = async (req: Request, res:Response): Promise<Response> => {
+    try {
+        const data:any = req.query
+        const tabID = data.tabID;
+        let uuid:string = data.uuid;
+
+        if(!!uuid && !!tabID){
+            return res.status(403).json({msg:'uuid or tabID is compulsory',})
+        }
+
+        if(!uuid && !!tabID){
+            const NAMESPACE = uuidv5.DNS;
+            uuid = uuidv5(tabID, NAMESPACE);
+
+        }
+
+        let query = `with pq as (select pq.*,
+                   jsonb_agg(po.*) as options
+            from poll_questions pq
+                     inner join poll_options po on pq.id = po.fk_poll_question_id
+            where pq.fk_user_id = :uuid
+            group by pq.id),
+     submissions as (select sub.fk_poll_question_id,
+                            jsonb_agg(sub.*)                                as submissions,
+                            count(sub.id)                                   as submission_count,
+                            sum(case when sub.is_correct then 1 else 0 end) as correct_count
+                     from (select ps.fk_poll_question_id,
+                                  u.id,
+                                  u.name,
+                                  ps.fk_poll_option_id,
+                                  po.option_text,
+                                  po.is_correct
+                           from poll_submissions ps
+                                    inner join users u on ps.fk_user_id = u.id
+                                    inner join poll_options po on ps.fk_poll_option_id = po.id) as sub
+                     group by sub.fk_poll_question_id)
+select pq.id,
+       pq.question_text,
+       pq.maximum_time,
+       pq."createdAt",
+       pq.options,
+       s.submissions,
+       s.submission_count,
+       s.correct_count
+from pq
+         left join submissions s on pq.id = s.fk_poll_question_id;`
+
+
+
+
+        const result:any = await DB.sequelize
+            .query(query, {
+                type: DB.sequelize.QueryTypes.SELECT,
+                replacements: {
+                    uuid,
+                },
+            })
+
+        if(result.length > 0){
+            return res.status(200).json(
+                {msg:'Success', data: result}
+            );
+        }else{
+            return res.status(200).json(
+                {msg:'Success', data:[]}
+            );
+        }
+    } catch (err) {
+        console.log(err)
+        return res.status(500).json(
+            {msg:'Something went wrong'}
+        );
+    }
+};
+
+export const updateUser = async (uuid:string, name:string): Promise<string> => {
+    try {
+        await DB.user.update({ name }, { where: { id: uuid } });
+
+        return 'Success';
+    } catch (err) {
+        return 'Error';
+    }
+};
+
 export const createOrUpdateUser = async (uuid:string, name:string|null, type: 'student'|'teacher'): Promise<void> => {
     try {
         const [{dataValues: result}, created] = await DB.user
@@ -141,17 +210,15 @@ export const createOrUpdateUser = async (uuid:string, name:string|null, type: 's
                 },
             })
 
-        if(created){
-            return result;
-        }else{
+        if(!created){
             await DB.user.update(
                 {
                     name:!!name?name:undefined,
                     is_student: type == 'student'
                 }, { where: { id: uuid } });
-
-            return result;
         }
+
+        return result;
     } catch (err) {
         console.error(err);
         return;
@@ -163,11 +230,12 @@ export const createQuestion = async (fk_user_id:UUID, question: Question): Promi
         const [{dataValues: result}, created] = await DB.poll_question
             .findOrCreate({
                 where: {
-                    question_text: question.question,
+                    fk_user_id, question_text: question.question,
                 },
                 defaults: {
                     fk_user_id,
                     question_text: question.question,
+                    maximum_time: question?.maximum_time || 60
                 },
             })
 
@@ -195,6 +263,7 @@ export const createQuestion = async (fk_user_id:UUID, question: Question): Promi
             {
                     id: result.id,
                     question_text: question.question,
+                    maximum_time: question?.maximum_time || 60,
                     options_db,
                     start_time: new Date()
             }
