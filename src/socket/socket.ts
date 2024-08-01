@@ -157,7 +157,11 @@ export const setupSocketHandlers = (io: Server) => {
 
         socket.on('send-message', async (message: string) => {
             try {
-                const user: any = await getJsonDataFromKey(socket.id);
+                let user: any = await getJsonDataFromKey(socket.id);
+                const teacher:any = await getJsonDataFromKey('current-teacher');
+                if(!!teacher && teacher.uuid === user.uuid){
+                    user.name = 'Teacher';
+                }
                 const userName = user.name || 'Anonymous';
                 const chatMessage = {
                     sender: userName,
