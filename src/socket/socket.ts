@@ -1,5 +1,5 @@
 import { Server, Socket } from 'socket.io';
-import {deleteJsonDataFromKey, getJsonDataFromKey, setJsonDataToKey} from '../../redis/crud';
+import {deleteJsonDataFromKey, getJsonDataFromKey, setJsonDataToKey, incrementRedis} from '../../redis/crud';
 import { v5 as uuidv5 } from 'uuid';
 import {answerQuestion, createQuestion, createOrUpdateUser, updateUser} from "../controllers/pollapp";
 export const setupSocketHandlers = (io: Server) => {
@@ -21,11 +21,21 @@ export const setupSocketHandlers = (io: Server) => {
                 await setJsonDataToKey('current-teacher', {uuid:generatedUUID})
                 io.emit('teacher-status', true as any);
                 socket.emit('set-user', {user_type:'teacher', user_id:generatedUUID})
+
+                const usersOnline = await getJsonDataFromKey('users-online') || [];
+                usersOnline.push({ socket_id: socket.id, uuid: generatedUUID, name: 'Teacher' });
+                await setJsonDataToKey('users-online', usersOnline);
             }else{
                 const user:any = await createOrUpdateUser(generatedUUID, null, 'student');
                 if(user?.name) await setJsonDataToKey(socket.id, user.name, ".name");
                 socket.emit('set-user', {user_type:'student', user_id:generatedUUID, user_name: user.name})
+
+                const usersOnline = await getJsonDataFromKey('users-online') || [];
+                usersOnline.push({ socket_id: socket.id, uuid: generatedUUID, name: user.name || 'Anonymous' });
+                await setJsonDataToKey('users-online', usersOnline);
             }
+
+            io.emit('users-online-updated', await getJsonDataFromKey('users-online'));
 
             next();
 
@@ -81,6 +91,9 @@ export const setupSocketHandlers = (io: Server) => {
                 await updateUser(user.uuid, name)
                 if(name) await setJsonDataToKey(socket.id, name, ".name");
                 socket.emit('set-user', {user_type:'student', user_id:user.uuid, user_name:name})
+
+                await setJsonDataToKey('users-online', name, `$.[?(@.uuid == '${user.uuid}')].name`);
+                io.emit('users-online-updated', await getJsonDataFromKey('users-online'));
             }catch (e) {
                 console.log(e)
             }
@@ -92,11 +105,14 @@ export const setupSocketHandlers = (io: Server) => {
             await createQuestion(user.uuid, data)
             const question:any  = await getJsonDataFromKey('current-poll');
 
+            await setJsonDataToKey('poll-count', 0);
+
             io.emit('current-poll',
                 {
                     question,
                     answer: null
                 } as any)
+            io.emit('poll-count-updated', await getJsonDataFromKey('poll-count'));
         });
 
         socket.on('answer-poll', async (obj:any) => {
@@ -110,6 +126,7 @@ export const setupSocketHandlers = (io: Server) => {
             const data:{code:number, msg:string} = await answerQuestion(user.uuid, poll_question_id, poll_option_id, socket.id);
 
             if(data.code == 200){
+                await incrementRedis("poll-count", "$");
                 const question:any  = await getJsonDataFromKey('current-poll');
                 const update_user:any  = await getJsonDataFromKey(socket.id);
 
@@ -119,6 +136,7 @@ export const setupSocketHandlers = (io: Server) => {
                             answer:!!update_user && update_user?.current_question? update_user:null
                     } as any)
 
+                io.emit('poll-count-updated', await getJsonDataFromKey('poll-count'));
             }
         });
 
@@ -152,6 +170,22 @@ export const setupSocketHandlers = (io: Server) => {
             }
         });
 
+        socket.on('kick-student', async (socketId: string) => {
+            const user:any  = await getJsonDataFromKey(socket.id);
+            const teacher:any = await getJsonDataFromKey('current-teacher');
+
+            if(!!teacher && teacher.uuid === user.uuid){
+                io.to(socketId).emit('kicked');
+                io.sockets.sockets.get(socketId)?.disconnect(true);
+
+                const usersOnline = await getJsonDataFromKey('users-online') || [];
+                const updatedUsersOnline = usersOnline.filter((user:any) => user.socket_id !== socketId);
+                await setJsonDataToKey('users-online', updatedUsersOnline);
+
+                io.emit('users-online-updated', updatedUsersOnline);
+            }
+        });
+
         socket.on('disconnect', async () => {
             const user:any  = await getJsonDataFromKey(socket.id);
             const teacher:any = await getJsonDataFromKey('current-teacher');
@@ -164,6 +198,12 @@ export const setupSocketHandlers = (io: Server) => {
                 await setJsonDataToKey('previous-teacher', {uuid:user.uuid})
                 io.emit('teacher-status', false as any);
             }
+
+            const usersOnline = await getJsonDataFromKey('users-online') || [];
+            const updatedUsersOnline = usersOnline.filter((u:any) => u.socket_id !== socket.id);
+            await setJsonDataToKey('users-online', updatedUsersOnline);
+
+            io.emit('users-online-updated', updatedUsersOnline);
 
             await deleteJsonDataFromKey(socket.id);
         });
