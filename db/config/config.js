@@ -20,14 +20,14 @@ module.exports = {
                 database: getEnv('DB_NAME', 'postgres'),
                 host: getEnv('DB_HOST', 'localhost'),
                 username: getEnv('DB_USER', 'postgres'),
-                password: getEnv('DB_PASS', '')+"#",
+                password: getEnv('DB_PASS', ''),
             },
         ],
         write: {
             database: getEnv('DB_NAME', 'postgres'),
             host: getEnv('DB_HOST', 'localhost'),
             username: getEnv('DB_USER', 'postgres'),
-            password: getEnv('DB_PASS', '')+"#",
+            password: getEnv('DB_PASS', ''),
         },
     },
     pool: {
